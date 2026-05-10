@@ -8,20 +8,24 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import ANNOTATIONS_DIR, SAMPLES_PATH
+from config import ANNOTATIONS_DIR, SAMPLES_PATH, samples_path_for
 
 
-def samples_mtime() -> float:
-    """samples.jsonl の mtime（差し替え検出用）。無ければ -1.0"""
-    return SAMPLES_PATH.stat().st_mtime if SAMPLES_PATH.exists() else -1.0
+def samples_mtime(annotator: str | None = None) -> float:
+    """samples ファイルの mtime（差し替え検出用）。無ければ -1.0"""
+    p = samples_path_for(annotator)
+    return p.stat().st_mtime if p.exists() else -1.0
 
 
 @st.cache_data
-def load_samples(mtime: float, path_str: str | None = None) -> list[dict]:
-    """事前計算された samples.jsonl を読み込む。
+def load_samples(mtime: float, annotator: str | None = None) -> list[dict]:
+    """事前計算された samples を読み込む。
 
-    `mtime` をキャッシュキーに含めることで、ファイル差し替え時に自動で
-    キャッシュが無効化される（呼び出し側は samples_mtime() を渡す）。
+    `mtime` と `annotator` をキャッシュキーに含めることで、ファイル差し替え時や
+    アノテーター切替時に自動でキャッシュが無効化される。
+
+    annotator 個別ファイル `samples_<annotator>.jsonl` があればそちらを優先。
+    なければ共通の `samples.jsonl`。
 
     各レコードに含まれるフィールド（asr-edit 側で生成）:
       sample_id      : ユニークID
@@ -33,7 +37,7 @@ def load_samples(mtime: float, path_str: str | None = None) -> list[dict]:
                        各要素: {type, ref_text, hyp_text,
                                 ref_start, ref_end, hyp_start, hyp_end}
     """
-    p = Path(path_str) if path_str else SAMPLES_PATH
+    p = samples_path_for(annotator)
     if not p.exists():
         return []
     with open(p, encoding="utf-8") as f:

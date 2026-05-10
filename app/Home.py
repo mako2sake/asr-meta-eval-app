@@ -7,7 +7,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import SAMPLES_PATH
+from config import DATA_DIR, SAMPLES_PATH, samples_path_for
 from data_loader import load_existing, load_samples, samples_mtime
 
 
@@ -29,22 +29,6 @@ st.markdown(
     "**書き起こしとしてどれだけ問題か**を 0〜1 のスコアで評価します。"
 )
 
-# --- データ読み込み（mtime をキーにキャッシュ無効化） ---
-mtime = samples_mtime()
-prev_mtime = st.session_state.get("samples_mtime")
-if prev_mtime is not None and prev_mtime != mtime:
-    _reset_navigation_state()
-st.session_state["samples_mtime"] = mtime
-
-samples = load_samples(mtime)
-if not samples:
-    st.error(
-        f"サンプルが見つかりません。`{SAMPLES_PATH.relative_to(Path.cwd()) if SAMPLES_PATH.is_relative_to(Path.cwd()) else SAMPLES_PATH}` を配置してください。"
-    )
-    st.stop()
-
-st.success(f"`samples.jsonl` を読み込みました: **{len(samples)} 件**")
-
 # --- アノテーター名入力 ---
 st.subheader("1. アノテーター名")
 default_name = st.session_state.get("annotator", "")
@@ -52,7 +36,8 @@ annotator = st.text_input(
     "あなたの識別子（アルファベット・数字・ハイフン・アンダースコアのみ）",
     value=default_name,
     placeholder="例: alice, bob, taro",
-    help="保存ファイル名 `data/annotations/<annotator>.jsonl` に使われます。",
+    help="保存ファイル名 `data/annotations/<annotator>.jsonl` に使われます。"
+         f" `data/samples_<annotator>.jsonl` があればそれを優先的に読み込みます。",
 )
 
 if annotator:
@@ -60,6 +45,31 @@ if annotator:
     if safe != annotator:
         st.warning(f"使用可能文字に整形されます: `{safe}`")
     annotator = safe
+
+# --- データ読み込み（annotator 個別ファイルを優先、mtime でキャッシュ無効化） ---
+mtime = samples_mtime(annotator)
+prev_key = (st.session_state.get("samples_mtime"),
+            st.session_state.get("samples_annotator"))
+new_key = (mtime, annotator)
+if prev_key[0] is not None and prev_key != new_key:
+    _reset_navigation_state()
+st.session_state["samples_mtime"] = mtime
+st.session_state["samples_annotator"] = annotator
+
+samples = load_samples(mtime, annotator)
+if not samples:
+    used_path = samples_path_for(annotator)
+    rel = used_path.relative_to(Path.cwd()) if used_path.is_relative_to(Path.cwd()) else used_path
+    st.error(
+        f"サンプルが見つかりません。`{rel}` または `{SAMPLES_PATH.name}` を `{DATA_DIR}` に配置してください。"
+    )
+    st.stop()
+
+# どのファイルを読んだかを表示
+loaded_path = samples_path_for(annotator)
+st.success(
+    f"`{loaded_path.name}` を読み込みました: **{len(samples)} 件**"
+)
 
 # --- 既存進捗 ---
 n_done = 0

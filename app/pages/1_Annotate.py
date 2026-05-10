@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -23,6 +24,67 @@ st.set_page_config(
     layout="wide",
 )
 
+
+# =============================================================================
+# キーボードショートカット
+#   ←  : 前のサンプル
+#   →  : 次のサンプル（保存して次へ）
+#   s  : ここで保存
+#   1〜5: フォーカスされている操作の score を選ぶ（acceptable..unscorable）
+#   f  : フォーカスされている操作のアライメント不適切フラグをトグル
+# =============================================================================
+
+def inject_keyboard_shortcuts() -> None:
+    components.html(
+        """
+        <script>
+        const doc = window.parent.document;
+
+        // 入力中（textarea / text input）はショートカットを発火させない
+        function isTyping() {
+            const el = doc.activeElement;
+            if (!el) return false;
+            const tag = el.tagName;
+            if (tag === 'TEXTAREA') return true;
+            if (tag === 'INPUT' && (el.type === 'text' || el.type === 'number')) return true;
+            return false;
+        }
+
+        function clickButtonByText(text) {
+            const buttons = doc.querySelectorAll('button');
+            for (const b of buttons) {
+                if (b.innerText.trim().startsWith(text)) {
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 既に注入済みなら何もしない（ページ再描画ごとの多重登録防止）
+        if (!doc.__asrAnnotShortcutsInstalled) {
+            doc.__asrAnnotShortcutsInstalled = true;
+            doc.addEventListener('keydown', function(e) {
+                if (e.metaKey || e.ctrlKey || e.altKey) return;
+                if (isTyping()) return;
+
+                if (e.key === 'ArrowRight') {
+                    if (clickButtonByText('次へ')) e.preventDefault();
+                } else if (e.key === 'ArrowLeft') {
+                    if (clickButtonByText('← 前')) e.preventDefault();
+                } else if (e.key === 's' || e.key === 'S') {
+                    if (clickButtonByText('💾')) e.preventDefault();
+                }
+            }, true);
+        }
+        </script>
+        """,
+        height=0,
+    )
+
+
+inject_keyboard_shortcuts()
+
 # --- セッション確認 ---
 if "samples" not in st.session_state or "annotator" not in st.session_state:
     st.warning("先にトップページからアノテーションを開始してください。")
@@ -30,11 +92,13 @@ if "samples" not in st.session_state or "annotator" not in st.session_state:
         st.switch_page("Home.py")
     st.stop()
 
+annotator: str = st.session_state["annotator"]
+
 # --- samples.jsonl 差し替え検出 → 最初からやり直し ---
-mtime = samples_mtime()
+mtime = samples_mtime(annotator)
 if st.session_state.get("samples_mtime") != mtime:
     st.session_state["samples_mtime"] = mtime
-    st.session_state["samples"] = load_samples(mtime)
+    st.session_state["samples"] = load_samples(mtime, annotator)
     st.session_state["current_idx"] = 0
     for key in list(st.session_state.keys()):
         if key.startswith("inputs_"):
@@ -43,7 +107,6 @@ if st.session_state.get("samples_mtime") != mtime:
     st.rerun()
 
 samples: list[dict] = st.session_state["samples"]
-annotator: str = st.session_state["annotator"]
 idx: int = st.session_state.get("current_idx", 0)
 
 if not samples:
@@ -156,10 +219,24 @@ error_ops = [
 if not error_ops:
     st.info("このサンプルにはエラー操作がありません。次へ進んでください。")
 else:
-    # ガイド（コンパクト表示）
-    with st.expander("スコアの目安", expanded=False):
+    # ガイド（詳細表示）
+    with st.expander("📋 スコアの目安（クリックで展開）", expanded=False):
+        st.markdown(
+            """
+            **基本方針**: 正解側が仮説側に変わってしまっている場合に、エラーの度合いを表現する。
+            """
+        )
         for label, value, vstr, desc in SCORE_OPTIONS:
-            st.markdown(f"- **{label}** ({vstr}): {desc}")
+            st.markdown(f"#### {label} ({vstr})")
+            for line in desc.split("／"):
+                st.markdown(f"- {line.strip()}")
+        st.markdown(
+            """
+            #### アラインメントが崩れている場合
+            - 「アライメント不適切」にチェックを入れた上で、**ずれ周辺で見たとき**の上記スコアを付ける
+            - 例: 「えーっと 定数」→「テ イス」 では `えーっと→テ` は **minor**、`定数→イス` は **critical**（テイスとして major でもOK）
+            """
+        )
 
     for op_idx, chunk in error_ops:
         ctype = chunk["type"]
@@ -275,3 +352,16 @@ with st.sidebar:
         persist_current()
         st.session_state["current_idx"] = int(target) - 1
         st.rerun()
+
+    st.divider()
+
+    with st.expander("⌨ ショートカット"):
+        st.markdown(
+            """
+            - `→` : 次へ（保存して次へ）
+            - `←` : 前へ
+            - `s` : ここで保存
+
+            ※ テキスト入力中はショートカット無効
+            """
+        )
