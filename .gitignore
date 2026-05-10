@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.streamlit/
+.DS_Store
+
+# データ・アノテーション結果はリポジトリ管理外
+/data/segments/
+/data/annotations/
+/data/samples/
+
+# uv ロックは含める方針なら下を消す
+# uv.lock
