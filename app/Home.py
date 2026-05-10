@@ -8,7 +8,14 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import SAMPLES_PATH
-from data_loader import load_existing, load_samples
+from data_loader import load_existing, load_samples, samples_mtime
+
+
+def _reset_navigation_state() -> None:
+    """サンプル差し替え時にナビゲーション関連の session_state を破棄"""
+    for key in list(st.session_state.keys()):
+        if key == "samples" or key == "current_idx" or key.startswith("inputs_"):
+            del st.session_state[key]
 
 st.set_page_config(
     page_title="ASR メタ評価アノテーション",
@@ -22,8 +29,14 @@ st.markdown(
     "**書き起こしとしてどれだけ問題か**を 0〜1 のスコアで評価します。"
 )
 
-# --- データ読み込み ---
-samples = load_samples()
+# --- データ読み込み（mtime をキーにキャッシュ無効化） ---
+mtime = samples_mtime()
+prev_mtime = st.session_state.get("samples_mtime")
+if prev_mtime is not None and prev_mtime != mtime:
+    _reset_navigation_state()
+st.session_state["samples_mtime"] = mtime
+
+samples = load_samples(mtime)
 if not samples:
     st.error(
         f"サンプルが見つかりません。`{SAMPLES_PATH.relative_to(Path.cwd()) if SAMPLES_PATH.is_relative_to(Path.cwd()) else SAMPLES_PATH}` を配置してください。"

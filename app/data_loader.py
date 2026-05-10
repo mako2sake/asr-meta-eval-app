@@ -11,9 +11,17 @@ import streamlit as st
 from config import ANNOTATIONS_DIR, SAMPLES_PATH
 
 
+def samples_mtime() -> float:
+    """samples.jsonl の mtime（差し替え検出用）。無ければ -1.0"""
+    return SAMPLES_PATH.stat().st_mtime if SAMPLES_PATH.exists() else -1.0
+
+
 @st.cache_data
-def load_samples(path_str: str | None = None) -> list[dict]:
+def load_samples(mtime: float, path_str: str | None = None) -> list[dict]:
     """事前計算された samples.jsonl を読み込む。
+
+    `mtime` をキャッシュキーに含めることで、ファイル差し替え時に自動で
+    キャッシュが無効化される（呼び出し側は samples_mtime() を渡す）。
 
     各レコードに含まれるフィールド（asr-edit 側で生成）:
       sample_id      : ユニークID

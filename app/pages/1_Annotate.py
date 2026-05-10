@@ -12,6 +12,8 @@ from data_loader import (
     annotation_path,
     build_record,
     load_existing,
+    load_samples,
+    samples_mtime,
     save_all,
 )
 
@@ -27,6 +29,18 @@ if "samples" not in st.session_state or "annotator" not in st.session_state:
     if st.button("トップページへ"):
         st.switch_page("Home.py")
     st.stop()
+
+# --- samples.jsonl 差し替え検出 → 最初からやり直し ---
+mtime = samples_mtime()
+if st.session_state.get("samples_mtime") != mtime:
+    st.session_state["samples_mtime"] = mtime
+    st.session_state["samples"] = load_samples(mtime)
+    st.session_state["current_idx"] = 0
+    for key in list(st.session_state.keys()):
+        if key.startswith("inputs_"):
+            del st.session_state[key]
+    st.info("サンプルが差し替えられたため、先頭から再開します。")
+    st.rerun()
 
 samples: list[dict] = st.session_state["samples"]
 annotator: str = st.session_state["annotator"]
@@ -191,11 +205,8 @@ else:
 
 
 # =============================================================================
-# UI: ナビゲーション + 保存
+# UI: 保存ヘルパ
 # =============================================================================
-
-st.divider()
-
 
 def persist_current() -> Path:
     """現在のサンプルのアノテーションを保存"""
@@ -205,55 +216,62 @@ def persist_current() -> Path:
     return save_all(annotator, by_sid)
 
 
-nav_cols = st.columns([1, 1, 1, 1])
-with nav_cols[0]:
-    if st.button("← 前", disabled=(idx == 0)):
+# =============================================================================
+# Sidebar: ナビゲーション + 保存 + ダウンロード（常時表示）
+# =============================================================================
+
+with st.sidebar:
+    st.markdown(f"### 📍 {idx + 1} / {len(samples)}")
+
+    by_sid = load_existing(annotator)
+    n_done = len(by_sid)
+    st.progress(
+        min(1.0, n_done / max(1, len(samples))),
+        text=f"進捗: {n_done} / {len(samples)}",
+    )
+
+    if st.button("← 前", disabled=(idx == 0), use_container_width=True):
         persist_current()
         st.session_state["current_idx"] = idx - 1
         st.rerun()
-with nav_cols[1]:
-    if st.button("💾 ここで保存"):
-        path = persist_current()
-        st.success(f"保存しました: {path}")
-with nav_cols[2]:
-    next_disabled = idx >= len(samples) - 1
-    if st.button("次へ →", type="primary", disabled=next_disabled):
+
+    if st.button("次へ →", type="primary",
+                 disabled=(idx >= len(samples) - 1),
+                 use_container_width=True):
         persist_current()
         st.session_state["current_idx"] = idx + 1
         st.rerun()
-with nav_cols[3]:
-    # 進捗表示
-    by_sid = load_existing(annotator)
-    n_done = len(by_sid)
-    st.markdown(
-        f'<div style="text-align:right;padding-top:6px;">'
-        f"<b>{n_done}</b> / {len(samples)} アノテーション済</div>",
-        unsafe_allow_html=True,
+
+    if st.button("💾 ここで保存", use_container_width=True):
+        path = persist_current()
+        st.success(f"保存: {path.name}")
+
+    st.divider()
+
+    # ダウンロード
+    apath = annotation_path(annotator)
+    if apath.exists():
+        with open(apath, "rb") as f:
+            st.download_button(
+                label="📥 結果をダウンロード",
+                data=f.read(),
+                file_name=apath.name,
+                mime="application/jsonl",
+                use_container_width=True,
+            )
+        st.caption(f"`{apath.name}`")
+    else:
+        st.caption("（まだ保存ファイルなし）")
+
+    st.divider()
+
+    # サンプルジャンプ
+    target = st.number_input(
+        "サンプルNoへ移動",
+        min_value=1, max_value=len(samples),
+        value=idx + 1, step=1,
     )
-
-st.progress(
-    min(1.0, len(load_existing(annotator)) / max(1, len(samples))),
-    text=f"全体進捗: {len(load_existing(annotator))} / {len(samples)}",
-)
-
-
-# =============================================================================
-# UI: ダウンロード
-# =============================================================================
-
-st.divider()
-st.subheader("結果のダウンロード")
-
-apath = annotation_path(annotator)
-if apath.exists():
-    with open(apath, "rb") as f:
-        st.download_button(
-            label="📥 アノテーション結果をダウンロード（Slack で送信用）",
-            data=f.read(),
-            file_name=apath.name,
-            mime="application/jsonl",
-            type="primary",
-        )
-    st.caption(f"ローカル保存先: `{apath}`")
-else:
-    st.info("まだ保存されたアノテーションがありません。")
+    if st.button("移動", use_container_width=True):
+        persist_current()
+        st.session_state["current_idx"] = int(target) - 1
+        st.rerun()
