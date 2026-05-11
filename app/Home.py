@@ -1,4 +1,4 @@
-"""トップページ: アノテーター名 → サンプル読み込み → アノテーション開始"""
+"""トップページ: アノテーター + セット選択 → 開始"""
 
 import sys
 from pathlib import Path
@@ -7,15 +7,21 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import DATA_DIR, SAMPLES_PATH, samples_path_for
+from config import (
+    SAMPLES_DIR,
+    SETS,
+    list_available_annotators,
+    samples_path_for,
+)
 from data_loader import load_existing, load_samples, samples_mtime
 
 
 def _reset_navigation_state() -> None:
-    """サンプル差し替え時にナビゲーション関連の session_state を破棄"""
+    """サンプル差し替え／切替時にナビゲーション関連の session_state を破棄"""
     for key in list(st.session_state.keys()):
-        if key == "samples" or key == "current_idx" or key.startswith("inputs_"):
+        if key in ("samples", "current_idx") or key.startswith("inputs_"):
             del st.session_state[key]
+
 
 st.set_page_config(
     page_title="ASR メタ評価アノテーション",
@@ -29,65 +35,73 @@ st.markdown(
     "**書き起こしとしてどれだけ問題か**を 0〜1 のスコアで評価します。"
 )
 
-# --- アノテーター名入力 ---
-st.subheader("1. アノテーター名")
-default_name = st.session_state.get("annotator", "")
-annotator = st.text_input(
-    "あなたの識別子（アルファベット・数字・ハイフン・アンダースコアのみ）",
-    value=default_name,
-    placeholder="例: alice, bob, taro",
-    help="保存ファイル名 `data/annotations/<annotator>.jsonl` に使われます。"
-         f" `data/samples_<annotator>.jsonl` があればそれを優先的に読み込みます。",
-)
+# --- アノテーター・セット選択 ---
+st.subheader("1. アノテーター名とセットを選ぶ")
 
-if annotator:
-    safe = "".join(c for c in annotator if c.isalnum() or c in "-_")
-    if safe != annotator:
-        st.warning(f"使用可能文字に整形されます: `{safe}`")
-    annotator = safe
-
-# --- データ読み込み（annotator 個別ファイルを優先、mtime でキャッシュ無効化） ---
-mtime = samples_mtime(annotator)
-prev_key = (st.session_state.get("samples_mtime"),
-            st.session_state.get("samples_annotator"))
-new_key = (mtime, annotator)
-if prev_key[0] is not None and prev_key != new_key:
-    _reset_navigation_state()
-st.session_state["samples_mtime"] = mtime
-st.session_state["samples_annotator"] = annotator
-
-samples = load_samples(mtime, annotator)
-if not samples:
-    used_path = samples_path_for(annotator)
-    rel = used_path.relative_to(Path.cwd()) if used_path.is_relative_to(Path.cwd()) else used_path
+annotators = list_available_annotators()
+if not annotators:
     st.error(
-        f"サンプルが見つかりません。`{rel}` または `{SAMPLES_PATH.name}` を `{DATA_DIR}` に配置してください。"
+        f"sample ファイルが見つかりません。`{SAMPLES_DIR}/` に "
+        "`samples_<annotator>_set?.jsonl` を配置してください。"
     )
     st.stop()
 
-# どのファイルを読んだかを表示
-loaded_path = samples_path_for(annotator)
-st.success(
-    f"`{loaded_path.name}` を読み込みました: **{len(samples)} 件**"
-)
+c1, c2 = st.columns([1, 1])
+with c1:
+    default_idx = annotators.index(st.session_state["annotator"]) \
+        if st.session_state.get("annotator") in annotators else 0
+    annotator = st.selectbox(
+        "あなたの名前",
+        options=annotators,
+        index=default_idx,
+        help="管理者から指示された名前を選んでください",
+    )
 
-# --- 既存進捗 ---
-n_done = 0
-if annotator:
-    existing = load_existing(annotator)
-    n_done = len(existing)
-    st.markdown(f"**進捗**: 既存アノテーション {n_done} / {len(samples)} 件")
+with c2:
+    default_set = st.session_state.get("set", SETS[0])
+    set_name = st.radio(
+        "セット",
+        options=SETS,
+        index=SETS.index(default_set) if default_set in SETS else 0,
+        horizontal=True,
+        help="今回担当するアノテーションセット",
+    )
+
+# --- sample ファイルの存在チェック ---
+sample_path = samples_path_for(annotator, set_name)
+if not sample_path.exists():
+    st.error(f"このセットのサンプルファイルが見つかりません: `{sample_path.name}`")
+    st.stop()
+
+mtime = samples_mtime(annotator, set_name)
+samples = load_samples(mtime, annotator, set_name)
+
+# 既存進捗
+existing = load_existing(annotator, set_name)
+n_done = len(existing)
+
+st.success(
+    f"`{sample_path.name}` を読み込みました: **{len(samples)} 件** "
+    f"｜ 進捗: **{n_done} / {len(samples)}**"
+)
 
 # --- 開始ボタン ---
 st.subheader("2. アノテーション開始")
 
+# annotator または set が変わったらナビ状態をリセット
+prev = (st.session_state.get("annotator"), st.session_state.get("set"),
+        st.session_state.get("samples_mtime"))
+if prev != (annotator, set_name, mtime) and any(p is not None for p in prev):
+    _reset_navigation_state()
+
+st.session_state["annotator"] = annotator
+st.session_state["set"] = set_name
+st.session_state["samples_mtime"] = mtime
+st.session_state["samples"] = samples
+
 c1, c2 = st.columns([1, 1])
 with c1:
-    start_disabled = not annotator
-    if st.button("▶ アノテーション開始（最初の未完了から）", type="primary", disabled=start_disabled):
-        st.session_state["annotator"] = annotator
-        st.session_state["samples"] = samples
-        existing = load_existing(annotator)
+    if st.button("▶ 最初の未完了から開始", type="primary"):
         next_idx = 0
         for i, s in enumerate(samples):
             if s["sample_id"] not in existing:
@@ -99,9 +113,7 @@ with c1:
         st.switch_page("pages/1_Annotate.py")
 
 with c2:
-    if annotator and st.button("◀ 先頭から開始（既存はそのまま保持）"):
-        st.session_state["annotator"] = annotator
-        st.session_state["samples"] = samples
+    if st.button("◀ 先頭から開始"):
         st.session_state["current_idx"] = 0
         st.switch_page("pages/1_Annotate.py")
 
@@ -110,11 +122,17 @@ st.divider()
 with st.expander("使い方"):
     st.markdown(
         """
-        1. **アノテーター名**を入力（既存の進捗があれば自動で再開）
-        2. 各サンプルで、エラー操作ごとに `acceptable / minor / major / critical / unscorable` を選択
-        3. アライメントが不適切に見える場合は **「アライメント不適切」** にチェック
-        4. 「次へ」を押すと自動保存されます
-        5. 終わったら左サイドバーの **「Annotate」** ページの最下部からダウンロード可能
+        1. **あなたの名前**を選び、担当する**セット**を選びます
+        2. 「開始」を押すとアノテーション画面に遷移します
+        3. 各サンプルでエラー操作ごとに 5択から選ぶ:
+           - `acceptable` (0.00) — 影響なし
+           - `minor`      (0.33) — 軽微
+           - `major`      (0.67) — 重要
+           - `critical`   (1.00) — 致命的
+           - `unscorable` (—)    — 判定不能
+        4. アライメントが不適切に見える場合は **「アライメント不適切」** にチェック
+        5. **「次へ」**で自動保存
+        6. 終わったらサイドバーの **ダウンロードボタン**で JSONL を取り出し、Slack 等で著者に送付
         """
     )
 

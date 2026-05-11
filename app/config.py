@@ -3,25 +3,41 @@
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
 
-# 入力（asr-edit から配布される samples.jsonl を置く）
-# 1. annotator 個別ファイル `samples_<annotator>.jsonl` を優先
-# 2. 共通ファイル `samples.jsonl` にフォールバック
-SAMPLES_PATH = DATA_DIR / "samples.jsonl"
+# 配布される sample ファイル群（リポジトリにコミットされる）
+SAMPLES_DIR = PROJECT_ROOT / "samples"
 
+# アノテーション結果（ローカル保存・git管理外）
+ANNOTATIONS_DIR = PROJECT_ROOT / "data" / "annotations"
 
-def samples_path_for(annotator: str | None = None) -> Path:
-    """annotator 個別の samples_<annotator>.jsonl があればそれ、無ければ samples.jsonl"""
-    if annotator:
-        per_user = DATA_DIR / f"samples_{annotator}.jsonl"
-        if per_user.exists():
-            return per_user
-    return SAMPLES_PATH
+# サポートするセット名
+SETS = ["set1", "set2"]
 
 
-# 出力（アノテーションごとのJSONL）
-ANNOTATIONS_DIR = DATA_DIR / "annotations"
+def samples_path_for(annotator: str, set_name: str) -> Path:
+    """`samples/samples_<annotator>_<set>.jsonl` のパスを返す"""
+    return SAMPLES_DIR / f"samples_{annotator}_{set_name}.jsonl"
+
+
+def annotation_path(annotator: str, set_name: str) -> Path:
+    """`data/annotations/<annotator>_<set>.jsonl` のパスを返す"""
+    safe_ann = "".join(c for c in annotator if c.isalnum() or c in "-_")
+    safe_set = "".join(c for c in set_name if c.isalnum() or c in "-_")
+    return ANNOTATIONS_DIR / f"{safe_ann}_{safe_set}.jsonl"
+
+
+def list_available_annotators() -> list[str]:
+    """samples/ から既存のアノテーター名一覧を抽出（重複除外、ソート）"""
+    names: set[str] = set()
+    for p in SAMPLES_DIR.glob("samples_*_set?.jsonl"):
+        stem = p.stem  # samples_<name>_<set>
+        parts = stem.split("_")
+        if len(parts) >= 3 and parts[0] == "samples":
+            # parts[1:-1] が name、parts[-1] が set
+            name = "_".join(parts[1:-1])
+            names.add(name)
+    return sorted(names)
+
 
 # スコア定義（4分位 + unscorable）
 SCORE_OPTIONS = [
@@ -46,9 +62,9 @@ SCORE_LABELS = [label for label, _, _, _ in SCORE_OPTIONS]
 
 # 操作タイプの色とラベル
 OP_COLORS = {
-    "substitute": "#ff6b6b",  # 赤
-    "delete":     "#74b9ff",  # 青
-    "insert":     "#55efc4",  # 緑
+    "substitute": "#ff6b6b",
+    "delete":     "#74b9ff",
+    "insert":     "#55efc4",
     "match":      "transparent",
 }
 OP_LABELS = {

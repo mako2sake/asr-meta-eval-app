@@ -24,34 +24,7 @@ cd asr-meta-eval-app
 uv sync
 ```
 
-## アノテーションデータの配置
-
-データ準備担当（asr-edit プロジェクト側）から `samples.jsonl` を受け取り、以下に配置：
-
-```
-data/samples.jsonl
-```
-
-ファイル形式は `data/samples.example.jsonl` を参照。各行が1サンプルで以下のフィールドを含む：
-
-```json
-{
-  "sample_id": "...",
-  "model": "openai/whisper-medium",
-  "talk_id": "...", "utterance_id": "...",
-  "ref_raw": "...", "hyp_raw": "...",
-  "ref_norm": "...", "hyp_norm": "...",
-  "alignment": [
-    {"type": "match|substitute|delete|insert",
-     "ref_text": "...", "hyp_text": "...",
-     "ref_start": 0, "ref_end": 1,
-     "hyp_start": 0, "hyp_end": 1}
-  ]
-}
-```
-
-アライメントは asr-edit 側で**事前計算済み**（Sudachi mode A 単語境界 + 文字 Levenshtein 投影）。
-このアプリでは計算しないので Sudachi 等の依存は不要。
+サンプルデータ（`samples/` 配下）はリポジトリにコミットされているので、別途取得不要です。
 
 ## 起動
 
@@ -61,18 +34,18 @@ uv run streamlit run app/Home.py
 
 ブラウザが開いたら：
 
-1. **アノテーター名**を入力（半角英数 / `-` / `_` のみ）
-   - `data/samples_<annotator>.jsonl` があればそれを優先的に読み込み、無ければ `data/samples.jsonl` を読みます
-2. **「アノテーション開始」**を押下
-3. 各サンプルでエラー操作ごとに 5択から選ぶ
+1. **名前を選ぶ**（管理者から指示された名前）
+2. **セットを選ぶ**（`set1` または `set2`、管理者から指示）
+3. **「開始」**を押すとアノテーション画面に遷移
+4. 各サンプルでエラー操作ごとに 5択：
    - `acceptable` (0.00) — 影響なし
    - `minor`      (0.33) — 軽微
    - `major`      (0.67) — 重要
    - `critical`   (1.00) — 致命的
    - `unscorable` (—)    — 判定不能
-4. アライメントが不適切に見える場合は **「アライメント不適切」** にチェック
-5. **「次へ」**で自動保存
-6. 終わったらサイドバーの **ダウンロードボタン**で JSONL を取り出し、Slack 等で著者に送付
+5. アライメントが不適切に見える場合は **「アライメント不適切」** にチェック
+6. **「次へ」**で自動保存
+7. 終わったらサイドバーの **ダウンロードボタン**で JSONL を取り出し、Slack 等で著者に送付
 
 ### キーボードショートカット
 
@@ -82,18 +55,40 @@ uv run streamlit run app/Home.py
 
 ※ テキスト入力中はショートカット無効
 
-## 出力
+## ディレクトリ構成
 
-- ローカル保存: `data/annotations/<annotator>.jsonl`
-- 1行 = 1サンプルのアノテーション結果
-- 中断・再開はそのまま可能（同名で再開すると既存ファイルから読み込み）
+```
+asr-meta-eval-app/
+├── app/
+│   ├── Home.py                  名前/セット選択 + 開始
+│   ├── pages/1_Annotate.py      アノテーション画面
+│   ├── config.py                パス・スコア定義
+│   └── data_loader.py           JSONL 読み書き
+├── samples/                     ★コミット済み（配布データ）
+│   ├── samples_ken_set1.jsonl
+│   ├── samples_ken_set2.jsonl
+│   ├── samples_alice_set1.jsonl
+│   ├── samples_alice_set2.jsonl
+│   ├── samples_bob_set1.jsonl
+│   ├── samples_bob_set2.jsonl
+│   ├── samples_taro_set1.jsonl
+│   └── samples_taro_set2.jsonl
+└── data/
+    └── annotations/             ★gitignored（個人データ）
+        ├── ken_set1.jsonl
+        ├── ken_set2.jsonl
+        └── ...
+```
 
-出力スキーマ:
+## 出力スキーマ
+
+`data/annotations/<annotator>_<set>.jsonl`、1行=1発話：
 
 ```json
 {
   "sample_id": "...",
-  "annotator": "alice",
+  "annotator": "ken",
+  "set": "set1",
   "model": "...", "talk_id": "...", "utterance_id": "...",
   "ref_norm": "...", "hyp_norm": "...",
   "operations": [
@@ -106,20 +101,4 @@ uv run streamlit run app/Home.py
   ],
   "annotated_at": "2026-..."
 }
-```
-
-## ディレクトリ構成
-
-```
-asr-meta-eval-app/
-├── app/
-│   ├── Home.py              トップページ
-│   ├── pages/1_Annotate.py  アノテーションページ
-│   ├── config.py            パス・スコア定義
-│   └── data_loader.py       JSONL 読み書き
-├── data/
-│   ├── samples.example.jsonl  入力フォーマット例
-│   ├── samples.jsonl          ★配布されたサンプルをここに
-│   └── annotations/           ★出力（自動生成）
-└── pyproject.toml
 ```

@@ -8,9 +8,8 @@ import streamlit.components.v1 as components
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import OP_COLORS, OP_LABELS, SCORE_LABELS, SCORE_OPTIONS
+from config import OP_COLORS, OP_LABELS, SCORE_LABELS, SCORE_OPTIONS, annotation_path
 from data_loader import (
-    annotation_path,
     build_record,
     load_existing,
     load_samples,
@@ -86,19 +85,21 @@ def inject_keyboard_shortcuts() -> None:
 inject_keyboard_shortcuts()
 
 # --- セッション確認 ---
-if "samples" not in st.session_state or "annotator" not in st.session_state:
+need_keys = ("samples", "annotator", "set")
+if not all(k in st.session_state for k in need_keys):
     st.warning("先にトップページからアノテーションを開始してください。")
     if st.button("トップページへ"):
         st.switch_page("Home.py")
     st.stop()
 
 annotator: str = st.session_state["annotator"]
+set_name: str = st.session_state["set"]
 
-# --- samples.jsonl 差し替え検出 → 最初からやり直し ---
-mtime = samples_mtime(annotator)
+# --- samples 差し替え検出 → 最初からやり直し ---
+mtime = samples_mtime(annotator, set_name)
 if st.session_state.get("samples_mtime") != mtime:
     st.session_state["samples_mtime"] = mtime
-    st.session_state["samples"] = load_samples(mtime, annotator)
+    st.session_state["samples"] = load_samples(mtime, annotator, set_name)
     st.session_state["current_idx"] = 0
     for key in list(st.session_state.keys()):
         if key.startswith("inputs_"):
@@ -118,7 +119,7 @@ sample = samples[idx]
 alignment = sample.get("alignment", [])
 
 # --- 既存アノテーションを読み込み ---
-existing_by_sid = load_existing(annotator)
+existing_by_sid = load_existing(annotator, set_name)
 saved_record = existing_by_sid.get(sample["sample_id"])
 
 # 入力 state（このサンプル用）を初期化
@@ -287,10 +288,10 @@ else:
 
 def persist_current() -> Path:
     """現在のサンプルのアノテーションを保存"""
-    record = build_record(sample, annotator, st.session_state[state_key])
-    by_sid = load_existing(annotator)
+    record = build_record(sample, annotator, set_name, st.session_state[state_key])
+    by_sid = load_existing(annotator, set_name)
     by_sid[record["sample_id"]] = record
-    return save_all(annotator, by_sid)
+    return save_all(annotator, set_name, by_sid)
 
 
 # =============================================================================
@@ -298,14 +299,18 @@ def persist_current() -> Path:
 # =============================================================================
 
 with st.sidebar:
+    st.markdown(f"**👤 {annotator}**　|　📦 **{set_name}**")
     st.markdown(f"### 📍 {idx + 1} / {len(samples)}")
 
-    by_sid = load_existing(annotator)
+    by_sid = load_existing(annotator, set_name)
     n_done = len(by_sid)
     st.progress(
         min(1.0, n_done / max(1, len(samples))),
         text=f"進捗: {n_done} / {len(samples)}",
     )
+
+    if st.button("🏠 トップへ戻る（別の人/別セットへ切替）", use_container_width=True):
+        st.switch_page("Home.py")
 
     if st.button("← 前", disabled=(idx == 0), use_container_width=True):
         persist_current()
@@ -326,7 +331,7 @@ with st.sidebar:
     st.divider()
 
     # ダウンロード
-    apath = annotation_path(annotator)
+    apath = annotation_path(annotator, set_name)
     if apath.exists():
         with open(apath, "rb") as f:
             st.download_button(

@@ -1,4 +1,4 @@
-"""samples.jsonl の読み込み・アノテーション結果のJSONL読み書き"""
+"""samples の読み込み、アノテーション結果のJSONL読み書き"""
 
 from __future__ import annotations
 
@@ -8,51 +8,28 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import ANNOTATIONS_DIR, SAMPLES_PATH, samples_path_for
+from config import LABEL_TO_VALUE, annotation_path, samples_path_for
 
 
-def samples_mtime(annotator: str | None = None) -> float:
-    """samples ファイルの mtime（差し替え検出用）。無ければ -1.0"""
-    p = samples_path_for(annotator)
+def samples_mtime(annotator: str, set_name: str) -> float:
+    """sample ファイルの mtime（差し替え検出用）。無ければ -1.0"""
+    p = samples_path_for(annotator, set_name)
     return p.stat().st_mtime if p.exists() else -1.0
 
 
 @st.cache_data
-def load_samples(mtime: float, annotator: str | None = None) -> list[dict]:
-    """事前計算された samples を読み込む。
-
-    `mtime` と `annotator` をキャッシュキーに含めることで、ファイル差し替え時や
-    アノテーター切替時に自動でキャッシュが無効化される。
-
-    annotator 個別ファイル `samples_<annotator>.jsonl` があればそちらを優先。
-    なければ共通の `samples.jsonl`。
-
-    各レコードに含まれるフィールド（asr-edit 側で生成）:
-      sample_id      : ユニークID
-      model          : モデル識別子
-      talk_id, utterance_id
-      ref_raw, hyp_raw         : 正規化前
-      ref_norm, hyp_norm       : 正規化後（アライメントはこれに対して計算済）
-      alignment      : 単語単位のアラインメントリスト
-                       各要素: {type, ref_text, hyp_text,
-                                ref_start, ref_end, hyp_start, hyp_end}
-    """
-    p = samples_path_for(annotator)
+def load_samples(mtime: float, annotator: str, set_name: str) -> list[dict]:
+    """事前計算された samples を読み込む（mtime/annotator/set をキャッシュキーに）"""
+    p = samples_path_for(annotator, set_name)
     if not p.exists():
         return []
     with open(p, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def annotation_path(annotator: str) -> Path:
-    """アノテーター名から保存先パスを返す"""
-    safe = "".join(c for c in annotator if c.isalnum() or c in "-_")
-    return ANNOTATIONS_DIR / f"{safe}.jsonl"
-
-
-def load_existing(annotator: str) -> dict[str, dict]:
-    """このアノテーターの既存アノテーションを sample_id でキー化して返す"""
-    path = annotation_path(annotator)
+def load_existing(annotator: str, set_name: str) -> dict[str, dict]:
+    """このアノテーター・セットの既存アノテーションを sample_id でキー化して返す"""
+    path = annotation_path(annotator, set_name)
     if not path.exists():
         return {}
     out: dict[str, dict] = {}
@@ -65,9 +42,9 @@ def load_existing(annotator: str) -> dict[str, dict]:
     return out
 
 
-def save_all(annotator: str, by_sample_id: dict[str, dict]) -> Path:
-    """全件を一度に書き出す（順不同なので sample_id でソートして再現性確保）"""
-    path = annotation_path(annotator)
+def save_all(annotator: str, set_name: str, by_sample_id: dict[str, dict]) -> Path:
+    """全件を sample_id でソートして書き出し"""
+    path = annotation_path(annotator, set_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         for sid in sorted(by_sample_id.keys()):
@@ -78,12 +55,10 @@ def save_all(annotator: str, by_sample_id: dict[str, dict]) -> Path:
 def build_record(
     sample: dict,
     annotator: str,
+    set_name: str,
     op_inputs: dict[int, dict],
 ) -> dict:
-    """サンプルとUI入力からアノテーション保存レコードを構築
-
-    op_inputs: {op_idx_in_alignment: {"score_label": str, "alignment_flag": bool}}
-    """
+    """サンプル+UI入力から保存レコードを構築"""
     operations: list[dict] = []
     for op_idx, chunk in enumerate(sample["alignment"]):
         if chunk["type"] == "match":
@@ -91,7 +66,6 @@ def build_record(
         ipt = op_inputs.get(op_idx)
         if ipt is None:
             continue
-        from config import LABEL_TO_VALUE
         label = ipt["score_label"]
         score_value = LABEL_TO_VALUE.get(label)
         operations.append({
@@ -111,6 +85,7 @@ def build_record(
     return {
         "sample_id": sample["sample_id"],
         "annotator": annotator,
+        "set": set_name,
         "model": sample.get("model"),
         "talk_id": sample.get("talk_id"),
         "utterance_id": sample.get("utterance_id"),

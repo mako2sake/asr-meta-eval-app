@@ -4,10 +4,8 @@ __pycache__/
 .streamlit/
 .DS_Store
 
-# データ・アノテーション結果はリポジトリ管理外
-/data/segments/
+# アノテーション結果は個人データなのでリポジトリ管理外
 /data/annotations/
-/data/samples/
 
 # uv ロックは含める方針なら下を消す
 # uv.lock
